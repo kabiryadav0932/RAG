@@ -1,8 +1,8 @@
-# Another Me — Local RAG Pipeline
+# Another Me — Local RAG Pipeline + Voice Interface
 
-A fully local, zero-cost Retrieval-Augmented Generation (RAG) pipeline built as a personal AI profiling system. No OpenAI. No API keys. Runs entirely on your machine using ChromaDB, HuggingFace embeddings, and Ollama.
+A fully local, zero-cost Retrieval-Augmented Generation (RAG) pipeline built as a personal AI profiling system. No OpenAI. No API keys. Runs entirely on your machine using ChromaDB, HuggingFace embeddings, Ollama, and a full voice interface powered by Whisper STT and Kokoro TTS.
 
-Built as a portfolio project covering **Production RAG** and **Monitoring & Observability** — from chunking strategies through hybrid retrieval, reranking, citation enforcement, RAGAS evaluation, and a CI-gated quality gate.
+Built as a portfolio project covering **Production RAG**, **Monitoring & Observability**, and **Voice AI** — from chunking strategies through hybrid retrieval, reranking, citation enforcement, RAGAS evaluation, a CI-gated quality gate, and a fully local voice assistant you can speak to and hear back from.
 
 ---
 
@@ -11,9 +11,11 @@ Built as a portfolio project covering **Production RAG** and **Monitoring & Obse
 Given a set of personal documents, the pipeline answers questions about the person by:
 1. Retrieving relevant chunks using hybrid search (BM25 + vector) fused with RRF
 2. Reranking results with a cross-encoder for precision
-3. Generating concise, cited answers using a local LLM (qwen2.5:1.5b via Ollama)
-4. Evaluating answer quality across 6 metrics using RAGAS + custom citation scoring
-5. Gating the pipeline on quality thresholds — fails CI if any metric regresses
+3. Routing questions — personal questions answered from docs, general questions answered from LLM knowledge
+4. Generating concise answers using a local LLM (llama3.2 via Ollama)
+5. Evaluating answer quality across 6 metrics using RAGAS + custom citation scoring
+6. Gating the pipeline on quality thresholds — fails CI if any metric regresses
+7. **Speaking answers aloud** using Kokoro neural TTS, and **listening to questions** via Whisper STT
 
 ---
 
@@ -25,8 +27,11 @@ Given a set of personal documents, the pipeline answers questions about the pers
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2` (HuggingFace) |
 | Sparse retrieval | BM25 (LangChain) |
 | Reranking | Cross-encoder (`ms-marco-MiniLM-L-6-v2`) |
-| LLM | `qwen2.5:1.5b` via Ollama |
+| LLM | `llama3.2` via Ollama |
 | Evaluation | RAGAS + custom citation metrics |
+| Speech-to-text | `faster-whisper` (base model, CPU) |
+| Text-to-speech | Kokoro ONNX (`af_bella` voice) |
+| Audio I/O | `sounddevice` + `scipy` (resampling) |
 | Language | Python 3.11 |
 
 All models run locally. No internet required after initial setup.
@@ -38,8 +43,13 @@ All models run locally. No internet required after initial setup.
 ```
 RAG/
 ├── docs/                        # Source documents (plain .txt)
+│   └── learned.txt              # Auto-saved facts learned from voice conversations
 ├── db/
 │   └── chroma_db/               # Persisted ChromaDB vector store
+├── models/
+│   └── kokoro/                  # Kokoro TTS model files
+│       ├── kokoro-v0_19.onnx
+│       └── voices.bin
 │
 ├── 01_Ingestion.py              # Document loading and vector store ingestion
 ├── 02_retrieval.py              # Basic vector similarity retrieval
@@ -55,6 +65,7 @@ RAG/
 ├── 11_ragas_eval.py             # RAGAS baseline evaluation
 ├── 12_citation_eval.py          # Citation enforcement + coverage scoring
 ├── 13_ci_gate.py                # CI quality gate (exits 1 on regression)
+├── 14_voice_interface.py        # Voice interface — speak to and hear from the pipeline
 │
 ├── ragas_results.json           # Run 1 raw scores
 ├── citation_ragas_results.json  # Run 3 raw scores
@@ -69,10 +80,10 @@ RAG/
 ### Prerequisites
 - Python 3.11
 - [Ollama](https://ollama.com) installed and running
-- `qwen2.5:1.5b` model pulled
+- `llama3.2` model pulled
 
 ```bash
-ollama pull qwen2.5:1.5b
+ollama pull llama3.2
 ```
 
 ### Install dependencies
@@ -83,7 +94,8 @@ cd RAG
 python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
-```
+pip install faster-whisper kokoro-onnx sounddevice scipy soundfile
+``` 
 
 ### Add your documents
 
@@ -93,9 +105,29 @@ Place `.txt` files in the `docs/` directory. Then build the vector store:
 python 01_Ingestion.py   # loads docs/, chunks, and builds the ChromaDB vector store
 ```
 
+### Download Kokoro TTS models
+
+```bash
+mkdir -p models/kokoro
+cd models/kokoro
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/kokoro-v0_19.onnx
+wget https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files/voices.bin
+cd ../..
+```
+
 ---
 
 ## Running the Pipeline
+
+### Voice interface (speak + listen)
+```bash
+python 14_voice_interface.py
+```
+- Press **Enter** to start recording
+- Speak your question
+- Press **Enter** again to stop
+- The answer is spoken back to you in a natural voice
+- Press **Ctrl+C** to quit
 
 ### Full evaluation (RAGAS + citation metrics)
 ```bash
@@ -107,6 +139,41 @@ python 12_citation_eval.py
 python 13_ci_gate.py
 # exits 0 if all checks pass, exits 1 on regression
 ```
+
+---
+
+## Voice Interface Architecture
+
+```
+🎤 Microphone (48000 Hz)
+       │
+  Resample → 16000 Hz
+       │
+  Whisper STT (faster-whisper, base, CPU)
+       │
+  Question text
+       │
+  ┌────┴────────────────────────────┐
+  │  Personal question?             │  General question?
+  │  (LLM classifier)               │
+  ▼                                 ▼
+RAG Pipeline                   LLM direct answer
+(BM25 + vector + RRF)          (llama3.2 knowledge)
+       │                             │
+       └──────────┬──────────────────┘
+                  ▼
+           Answer text
+                  │
+          Kokoro TTS (ONNX)
+                  │
+       Resample 24000 → 48000 Hz
+                  │
+            🔊 Speaker
+```
+
+**Smart routing:** The pipeline classifies each question before answering. Personal questions ("what is my favorite movie?") are answered strictly from your documents. General questions ("recommend movies like Veer-Zaara") are answered from the LLM's own knowledge — no doc contamination.
+
+**Audio resampling:** Your ALSA device runs at 48000 Hz natively. All resampling (mic input and speaker output) uses `scipy.signal.resample_poly` for artifact-free audio.
 
 ---
 
@@ -172,7 +239,7 @@ Query
                                                      │
                                               Cross-encoder rerank
                                                      │
-                                              LLM generation (Ollama)
+                                              LLM generation (llama3.2)
                                                      │
                                               Answer + [Source N] citations
 ```
@@ -183,9 +250,13 @@ Query
 
 **Why fully local?** Privacy, zero cost, and to demonstrate understanding of inference constraints — the same trade-offs that matter in real enterprise deployments.
 
-**Why qwen2.5:1.5b?** Fastest local model available on CPU hardware (2s/query vs 20s for llama3.2). Sufficient for short factual extraction tasks.
+**Why llama3.2?** Better instruction following and significantly reduced hallucination compared to smaller models. Used for both answer generation and the question-routing classifier.
 
 **Why hybrid retrieval + RRF?** BM25 handles exact keyword matches; vector search handles semantic similarity. RRF fuses both rank lists without requiring score normalisation. This combination consistently outperforms either retriever alone on recall.
+
+**Why Kokoro TTS over Piper?** Kokoro uses a neural ONNX model producing natural-sounding speech. Piper's `synthesize()` produced empty WAV output on this hardware configuration. Kokoro worked out of the box with no issues.
+
+**Why Whisper base?** Best balance of accuracy and CPU speed for conversational use. The `initial_prompt` parameter is used to bias recognition toward Indian names, Bollywood titles, and project-specific terminology.
 
 **Why RAGAS for evaluation?** RAGAS provides decomposed metrics that isolate retrieval quality from generation quality — critical for debugging whether a bad answer comes from the retriever or the LLM.
 
@@ -205,6 +276,11 @@ sentence-transformers
 ragas
 datasets
 rank-bm25
+faster-whisper
+kokoro-onnx
+sounddevice
+scipy
+soundfile
 ```
 
 ---
