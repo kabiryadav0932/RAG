@@ -21,35 +21,38 @@ import tempfile
 import warnings
 import numpy as np
 import sounddevice as sd
+import scipy.signal as sps
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 from pathlib import Path
 from faster_whisper import WhisperModel
-from piper.voice import PiperVoice
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain_community.document_loaders import DirectoryLoader, TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_ollama import OllamaLLM
+from kokoro_onnx import Kokoro
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DOCS_PATH          = "docs"
 DB_PATH            = "db/chroma_db"
 EMBEDDING_MODEL    = "all-MiniLM-L6-v2"
 COLLECTION_NAME    = "main_chunks"
-OLLAMA_MODEL       = "qwen2.5:1.5b"
+OLLAMA_MODEL       = "llama3.2"
 TOP_K              = 3
 RRF_K              = 60
 BM25_CHUNK_SIZE    = 500
 BM25_CHUNK_OVERLAP = 50
 
 WHISPER_MODEL_SIZE = "base"          # tiny/base/small — base is best balance on CPU
-PIPER_MODEL        = "models/piper/en_US-lessac-medium.onnx"
-PIPER_CONFIG       = "models/piper/en_US-lessac-medium.onnx.json"
+KOKORO_MODEL       = "models/kokoro/kokoro-v0_19.onnx"
+KOKORO_VOICES      = "models/kokoro/voices.bin"
+KOKORO_VOICE       = "af_bella"
 
 MIC_DEVICE         = 0               # sof-hda-dsp hw:0,0 — 2 inputs
-SAMPLE_RATE        = 16000           # Whisper expects 16kHz
+DEVICE_RATE        = 48000           # native rate for sof-hda-dsp
+WHISPER_RATE       = 16000           # Whisper expects 16kHz
 
 
 # ── Load RAG pipeline ─────────────────────────────────────────────────────────
@@ -89,17 +92,12 @@ def load_whisper():
     print("[init] Whisper ready.")
     return model
 
-# ── Load Piper ────────────────────────────────────────────────────────────────
-def load_piper():
-    print("[init] Loading Piper TTS voice...")
-    if not Path(PIPER_MODEL).exists():
-        raise FileNotFoundError(
-            f"Piper model not found at {PIPER_MODEL}\n"
-            "Run the wget commands from the setup instructions first."
-        )
-    voice = PiperVoice.load(PIPER_MODEL, config_path=PIPER_CONFIG, use_cuda=False)
-    print("[init] Piper ready.")
-    return voice
+# ── Load Kokoro ───────────────────────────────────────────────────────────────
+def load_kokoro():
+    print("[init] Loading Kokoro TTS...")
+    kokoro = Kokoro(KOKORO_MODEL, KOKORO_VOICES)
+    print("[init] Kokoro ready.")
+    return kokoro
 
 # ── RRF ───────────────────────────────────────────────────────────────────────
 def reciprocal_rank_fusion(result_lists, k=RRF_K):
@@ -123,16 +121,26 @@ def hybrid_retrieve(query, vectorstore, bm25_retriever):
     return fused[:TOP_K]
 
 # ── Generate answer ───────────────────────────────────────────────────────────
+def is_personal_question(question, llm):
+    """Ask LLM if the question is personal (about the user) or general."""
+    check_prompt = f"""Is this question asking about a specific person's personal life, preferences, history, or traits?
+Answer only YES or NO.
+
+Question: {question}"""
+    result = llm.invoke(check_prompt).strip().upper()
+    return result.startswith("YES")
+
 def generate_answer(question, docs, llm):
-    context = "\n\n---\n\n".join(
-        f"[Source {i+1}]: {doc.page_content}"
-        for i, doc in enumerate(docs)
-    )
-    prompt = f"""You are a precise fact extraction assistant.
-Answer the question in 1-2 sentences using ONLY the context below.
-Keep the answer SHORT and natural — it will be read aloud.
-Do NOT use bullet points, markdown, or [Source N] citations in this response.
-If the answer is not in the context, say: "I don't know based on my documents."
+    if is_personal_question(question, llm):
+        # Personal question — answer from docs
+        context = "\n\n---\n\n".join(
+            f"[Source {i+1}]: {doc.page_content}"
+            for i, doc in enumerate(docs)
+        )
+        prompt = f"""You are "Another Me" — a personal AI that answers questions about a specific person using their documents.
+Answer in 1-2 sentences using ONLY the context below. Keep it SHORT and natural for speech.
+Do NOT use bullet points, markdown, or citations.
+If the answer is not in the context, say: "I don't have that information."
 
 Context:
 {context}
@@ -140,17 +148,22 @@ Context:
 Question: {question}
 
 Answer:"""
+    else:
+        # General question — answer from LLM knowledge, no docs
+        prompt = f"""You are a helpful assistant. Answer this general question in 1-2 sentences.
+Keep it SHORT and natural — it will be read aloud. No bullet points or markdown.
+
+Question: {question}
+
+Answer:"""
 
     answer = llm.invoke(prompt)
-    # Trim to 2 sentences max
     sentences = [s.strip() for s in answer.strip().split('.') if s.strip()]
     trimmed   = '. '.join(sentences[:2])
     return trimmed + '.' if trimmed and not trimmed.endswith('.') else trimmed
 
 # ── Record audio with auto-stop on silence ────────────────────────────────────
 def record_manual():
-    import threading
-
     frames = []
 
     def callback(indata, frame_count, time_info, status):
@@ -160,7 +173,7 @@ def record_manual():
 
     stream = sd.InputStream(
         device=MIC_DEVICE,
-        samplerate=SAMPLE_RATE,
+        samplerate=DEVICE_RATE,        # record at hardware native rate (48000)
         channels=1,
         dtype="float32",
         callback=callback,
@@ -172,7 +185,13 @@ def record_manual():
     stream.close()
 
     audio = np.concatenate(frames, axis=0)
-    print(f"[🎤] Recorded {len(audio)/SAMPLE_RATE:.1f}s of audio.")
+    print(f"[🎤] Recorded {len(audio)/DEVICE_RATE:.1f}s of audio.")
+
+    # Resample 48000 → 16000 for Whisper (resample_poly avoids artifacts)
+    from math import gcd
+    g = gcd(DEVICE_RATE, WHISPER_RATE)
+    audio = sps.resample_poly(audio, WHISPER_RATE // g, DEVICE_RATE // g)
+
     return audio
 
 # ── Transcribe with Whisper ───────────────────────────────────────────────────
@@ -183,36 +202,28 @@ def transcribe(audio, whisper_model):
         with wave.open(f, 'wb') as wf:
             wf.setnchannels(1)
             wf.setsampwidth(2)  # 16-bit
-            wf.setframerate(SAMPLE_RATE)
+            wf.setframerate(WHISPER_RATE)          # wav header must match resampled rate
             pcm = (audio * 32767).astype(np.int16)
             wf.writeframes(pcm.tobytes())
 
-    segments, info = whisper_model.transcribe(tmp_path, language="en", beam_size=5)
+    segments, info = whisper_model.transcribe(
+        tmp_path,
+        language="en",
+        beam_size=5,
+        initial_prompt="Kabir, PES University, Bangalore, Veer-Zaara, Bollywood, India, Bihar, Patna."
+    )
     text = " ".join(seg.text for seg in segments).strip()
     Path(tmp_path).unlink(missing_ok=True)
     return text
 
-# ── Speak with Piper ──────────────────────────────────────────────────────────
-def speak(text, piper_voice):
+# ── Speak with Kokoro ────────────────────────────────────────────────────────
+def speak(text, kokoro):
     print("[🔊] Speaking...")
-    # Piper requires a real file — BytesIO doesn't set channels correctly
-    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-        tmp_path = f.name
-
-    with wave.open(tmp_path, 'wb') as wf:
-        wf.setnchannels(1)
-        wf.setsampwidth(2)
-        wf.setframerate(22050)   # Piper lessac-medium outputs 22050Hz
-        piper_voice.synthesize(text, wf)
-
-    with wave.open(tmp_path, 'rb') as wf:
-        sample_rate = wf.getframerate()
-        frames      = wf.readframes(wf.getnframes())
-
-    Path(tmp_path).unlink(missing_ok=True)
-
-    audio = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-    sd.play(audio, samplerate=sample_rate)
+    from math import gcd
+    samples, rate = kokoro.create(text, voice=KOKORO_VOICE, speed=1.0, lang="en-us")
+    g = gcd(rate, DEVICE_RATE)
+    audio = sps.resample_poly(samples, DEVICE_RATE // g, rate // g)
+    sd.play(audio, samplerate=DEVICE_RATE)
     sd.wait()
 
 # ── Main loop ─────────────────────────────────────────────────────────────────
@@ -224,7 +235,7 @@ if __name__ == "__main__":
     # Load all models once
     vectorstore, bm25_retriever, llm = load_pipeline()
     whisper_model = load_whisper()
-    piper_voice   = load_piper()
+    kokoro        = load_kokoro()
 
     print("\n" + "=" * 60)
     print("  Press Enter to START recording.")
@@ -238,7 +249,7 @@ if __name__ == "__main__":
 
             # 1. Record until second Enter
             audio = record_manual()
-            if len(audio) / SAMPLE_RATE < 0.5:
+            if len(audio) / WHISPER_RATE < 0.5:   # length check after resampling
                 print("[!] Too short — try again.")
                 continue
 
@@ -257,7 +268,7 @@ if __name__ == "__main__":
             print(f"[Me]   {answer}")
 
             # 4. Speak answer
-            speak(answer, piper_voice)
+            speak(answer, kokoro)
 
         except KeyboardInterrupt:
             print("\n\n[Bye!]")
