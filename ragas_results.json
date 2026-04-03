@@ -1,0 +1,142 @@
+[
+  {
+    "user_input":"What is Kabir's favourite movie?",
+    "retrieved_contexts":[
+      "Favorite movie:\nMy all-time favorite movie is Veer-Zaara. It is a Bollywood romantic drama with powerful emotion, beautiful music, and timeless storytelling. Veer-Zaara holds a special place for me both as a film and as a soundtrack.\n\nFavorite shows \/ dramas:\nI enjoy watching Korean dramas and Chinese dramas. I find their storytelling and emotional depth very engaging.",
+      "What truth have you recently realized?\nThat thinking alone doesn't change anything\u2014only action does. Progress comes from execution, not just ideas.\n\nWhat is one change that can transform your life?\nTaking consistent action without overthinking. Even small daily progress can completely change my future over time.",
+      "Favorite music:\nI have a strong preference for classic Bollywood music, especially from the 90s and early 2000s. Some of my favorite music albums include Hum Aapke Hain Koun..!, Vivah, Saajan, Raaaz,Kasoor and etc.. . I appreciate music that has strong emotion and storytelling."
+    ],
+    "response":"Veer-Zaara.",
+    "reference":"Kabir's all-time favourite movie is Veer-Zaara, a Bollywood romantic drama.",
+    "faithfulness":0.0,
+    "answer_relevancy":0.2652053309,
+    "context_precision":0.9999999999,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"Does Kabir overthink?",
+    "retrieved_contexts":[
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "Do you overthink?\nYes, I tend to overthink at times. Since I spend a lot of time reflecting and don't rely heavily on a large social circle, I often process things internally. While this can slow me down occasionally, it also helps me gain deeper clarity.\n\nHow do you act under pressure?\nUnder pressure, I consciously slow myself down. I take a deep breath, focus on what needs to be done, and then start working step by step instead of panicking.",
+      "Favorite music:\nI have a strong preference for classic Bollywood music, especially from the 90s and early 2000s. Some of my favorite music albums include Hum Aapke Hain Koun..!, Vivah, Saajan, Raaaz,Kasoor and etc.. . I appreciate music that has strong emotion and storytelling."
+    ],
+    "response":"Yes, Kabir tends to overthink at times. He spends a lot of time reflecting and doesn't rely heavily on a large social circle, which can sometimes slow him down but also help him gain deeper clarity.",
+    "reference":"Yes, Kabir tends to overthink at times. He processes things internally since he does not rely heavily on a large social circle.",
+    "faithfulness":0.75,
+    "answer_relevancy":0.9788314587,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"What does failure mean to Kabir?",
+    "retrieved_contexts":[
+      "What does failure mean to you?\nFailure is not something I fear; instead, I see it as feedback. It highlights my weaknesses, pushes me to improve, and builds resilience. Every failure is a step closer to understanding what works and what doesn't.\n\nDo you believe in luck?\nYes, I believe luck exists, but I see it as opportunity meeting preparation. While luck can open doors, it's consistent effort and skill that determine whether you can walk through them.",
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "What does success mean to you?\nSuccess is achieving financial stability while having the freedom to spend quality time with my family and loved ones. It's not just about money or status, but about balance\u2014earning enough to live well while still having time for what truly matters."
+    ],
+    "response":"Failure means to Kabir as feedback highlighting weaknesses and driving towards improvement, building resilience.",
+    "reference":"Kabir sees failure as feedback. It highlights weaknesses, pushes improvement, and builds resilience. He does not fear failure.",
+    "faithfulness":1.0,
+    "answer_relevancy":0.9720200118,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"What is Kabir's core philosophy in life?",
+    "retrieved_contexts":[
+      "What motivates you daily?\nThe desire to improve myself and not waste my potential. I don't want to live an average life when I know I'm capable of more.\n\nWhat is your core philosophy in life?\nLife is short, so it should be lived with intention. I believe in building something meaningful rather than just chasing temporary comfort.\n\nHow do you define intelligence?\nIntelligence is not just knowledge\u2014it's the ability to learn quickly, adapt, think critically, and solve real-world problems.",
+      "What truth have you recently realized?\nThat thinking alone doesn't change anything\u2014only action does. Progress comes from execution, not just ideas.\n\nWhat is one change that can transform your life?\nTaking consistent action without overthinking. Even small daily progress can completely change my future over time.",
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them."
+    ],
+    "response":"Life should be lived with intention, building something meaningful rather than just chasing temporary comfort.",
+    "reference":"Life is short and should be lived with intention. Kabir believes in building something meaningful rather than chasing temporary comfort.",
+    "faithfulness":1.0,
+    "answer_relevancy":0.3056766333,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"What motivates Kabir daily?",
+    "retrieved_contexts":[
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "What motivates you daily?\nThe desire to improve myself and not waste my potential. I don't want to live an average life when I know I'm capable of more.\n\nWhat is your core philosophy in life?\nLife is short, so it should be lived with intention. I believe in building something meaningful rather than just chasing temporary comfort.\n\nHow do you define intelligence?\nIntelligence is not just knowledge\u2014it's the ability to learn quickly, adapt, think critically, and solve real-world problems.",
+      "Long-term goals:\nTo establish myself as a highly skilled professional in ML and DL, working on impactful systems and contributing to advancements in AI. I am also targeting a Master's degree from a top international university.\n\nWhat motivates you to work?\nSmall wins and visible progress. Each improvement, no matter how small, gives me confidence and pushes me to keep going."
+    ],
+    "response":"Kabir is motivated by the desire to improve himself and not waste his potential.",
+    "reference":"The desire to improve himself and not waste his potential. He does not want to live an average life.",
+    "faithfulness":1.0,
+    "answer_relevancy":0.9333959796,
+    "context_precision":0.5833333333,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"How does Kabir handle pressure?",
+    "retrieved_contexts":[
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "Do you overthink?\nYes, I tend to overthink at times. Since I spend a lot of time reflecting and don't rely heavily on a large social circle, I often process things internally. While this can slow me down occasionally, it also helps me gain deeper clarity.\n\nHow do you act under pressure?\nUnder pressure, I consciously slow myself down. I take a deep breath, focus on what needs to be done, and then start working step by step instead of panicking.",
+      "Favorite music:\nI have a strong preference for classic Bollywood music, especially from the 90s and early 2000s. Some of my favorite music albums include Hum Aapke Hain Koun..!, Vivah, Saajan, Raaaz,Kasoor and etc.. . I appreciate music that has strong emotion and storytelling."
+    ],
+    "response":"Kabir consciously slows himself down under pressure by taking a deep breath, focusing on what needs to be done, and working step by step instead of panicking.",
+    "reference":"Under pressure, Kabir consciously slows himself down, takes a deep breath, and works step by step instead of panicking.",
+    "faithfulness":1.0,
+    "answer_relevancy":0.7274779358,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"What are Kabir's long-term goals?",
+    "retrieved_contexts":[
+      "Long-term goals:\nTo establish myself as a highly skilled professional in ML and DL, working on impactful systems and contributing to advancements in AI. I am also targeting a Master's degree from a top international university.\n\nWhat motivates you to work?\nSmall wins and visible progress. Each improvement, no matter how small, gives me confidence and pushes me to keep going.",
+      "How do you stay consistent?\nI rely on small daily goals rather than waiting for motivation. Consistency comes from showing up every day, even if progress is small.\n\nWhat habits are you trying to build?\nRegular exercise, focused study sessions, and consistent project work.\n\nWhat habits are you trying to break?\nProcrastination and reducing distractions that affect my productivity.\n\n\n## INTERESTS & PREFERENCES",
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them."
+    ],
+    "response":"To establish himself as a highly skilled professional in ML and DL, working on impactful systems and contributing to advancements in AI.",
+    "reference":"Kabir aims to establish himself as a skilled professional in ML and DL, work on impactful systems, and pursue a Master's degree from a top university.",
+    "faithfulness":1.0,
+    "answer_relevancy":0.2199539567,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"What kind of people does Kabir respect?",
+    "retrieved_contexts":[
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "What would you never compromise on?\nMy ideas, curiosity, and my drive to think independently. I value intelligence\u2014not just in terms of knowledge, but in the ability to think critically and differently from the crowd.\n\nWhat kind of people do you respect?\nPeople who are genuinely kind, respectful, and authentic. Intelligence impresses me, but humility and good character earn my respect.",
+      "Favorite music:\nI have a strong preference for classic Bollywood music, especially from the 90s and early 2000s. Some of my favorite music albums include Hum Aapke Hain Koun..!, Vivah, Saajan, Raaaz,Kasoor and etc.. . I appreciate music that has strong emotion and storytelling."
+    ],
+    "response":"Kabir respects people who are genuinely kind, respectful, and have good character.",
+    "reference":"Kabir respects people who are genuinely kind, respectful, and authentic. Intelligence impresses him but humility and good character earn his respect.",
+    "faithfulness":0.0,
+    "answer_relevancy":0.8410149671,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"What kind of music does Kabir prefer?",
+    "retrieved_contexts":[
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "Favorite music:\nI have a strong preference for classic Bollywood music, especially from the 90s and early 2000s. Some of my favorite music albums include Hum Aapke Hain Koun..!, Vivah, Saajan, Raaaz,Kasoor and etc.. . I appreciate music that has strong emotion and storytelling.",
+      "What do you do when bored?\nEarlier I used to scroll social media, but now I prefer listening to music or taking rest. This helps me reset my mind instead of wasting time.\n\nWhat kind of content inspires you?\nContent that combines creativity with knowledge\u2014especially in AI and technology. I like learning while being entertained."
+    ],
+    "response":"Kabir Rai prefers classic Bollywood music, particularly from the 90s and early 2000s. Some of his favorite albums include \"Hum Aapke Hain Koun.",
+    "reference":"Kabir has a strong preference for classic Bollywood music, especially from the 90s and early 2000s.",
+    "faithfulness":1.0,
+    "answer_relevancy":0.827213356,
+    "context_precision":1.0,
+    "context_recall":1.0
+  },
+  {
+    "user_input":"How does Kabir make decisions?",
+    "retrieved_contexts":[
+      "What role does discipline play in your life?\nDiscipline is the bridge between goals and results. Motivation comes and goes, but discipline ensures consistency.\n\n\n## THINKING & DECISION-MAKING\n\nHow do you make decisions?\nI take time to think deeply before making decisions. I try to understand the situation from different angles, evaluate possible outcomes, and then commit fully once I've chosen a direction.",
+      "## IDENTITY\n\nFull Name: Kabir Rai\nPreferred Name: Kabir\nDate of Birth: 1st January 2004\nAge: 21\nPlace of Birth: Patna, Bihar\nCurrent Location: Bangalore, Karnataka\nLanguages: Hindi, English, and a working understanding of several local and major Indian languages\n\nSelf-Description:\nI am a technically curious and self-driven problem-solver who strives to deeply understand systems\u2014whether in technology, workflows, or personal growth\u2014and actively builds and improves them.",
+      "How do you learn from past decisions?\nI reflect on my decisions\u2014both good and bad\u2014to understand what I could have done better. This helps me make more informed choices in the future.\n\n\n## BEHAVIORAL SCENARIOS\n\nWhat do you do when your project fails?\nI analyze what went wrong, identify the gaps, and improve the approach. I see failure as a learning process rather than an endpoint."
+    ],
+    "response":"Kabir makes decisions by taking time to think deeply before committing, evaluating possible outcomes from different angles, understanding the situation thoroughly, and then choosing a direction.",
+    "reference":"Kabir takes time to think deeply, evaluates the situation from different angles, considers possible outcomes, and then commits fully.",
+    "faithfulness":1.0,
+    "answer_relevancy":1.0,
+    "context_precision":1.0,
+    "context_recall":1.0
+  }
+]
