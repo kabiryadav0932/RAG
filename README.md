@@ -15,7 +15,9 @@ Given a set of personal documents, the pipeline answers questions about the pers
 4. Maintaining **conversation memory** across turns within a session
 5. Evaluating answer quality across 6 metrics using RAGAS + custom citation scoring
 6. Gating the pipeline on quality thresholds — fails CI if any metric regresses
-7. **Speaking answers aloud** using Kokoro neural TTS, and **listening to questions** via Whisper STT with a custom **"Okiro" wake word**
+7. **Speaking answers aloud** using Kokoro neural TTS, and **listening to questions** via Whisper STT
+8. **Saving session history** to `docs/history.txt` automatically on exit
+9. **Hybrid question mode** — answers personal questions from your docs and general questions from world knowledge
 
 ---
 
@@ -29,9 +31,9 @@ Given a set of personal documents, the pipeline answers questions about the pers
 | Reranking | Cross-encoder (`ms-marco-MiniLM-L-6-v2`) |
 | LLM | `llama3.2` via Ollama |
 | Evaluation | RAGAS + custom citation metrics |
-| Speech-to-text | `faster-whisper` (base model, CPU) |
-| Text-to-speech | Kokoro ONNX (`af_bella` voice) |
-| Wake word | Whisper-based keyword spotting (`"Okiro"`) |
+| Speech-to-text | `faster-whisper` (small model, CPU) |
+| Text-to-speech | Kokoro ONNX (`af_sky` voice) |
+| Stop word | `"ok"` — say it at the end of your question to stop recording |
 | Audio I/O | `sounddevice` + `scipy` (resampling) |
 | Language | Python 3.11 |
 
@@ -45,7 +47,8 @@ All models run locally. No internet required after initial setup.
 RAG/
 ├── docs/                        # Source documents (plain .txt)
 │   ├── data.txt                 # Personal knowledge base
-│   └── personal.txt             # Additional personal facts
+│   ├── personal.txt             # Additional personal facts
+│   └── history.txt              # Auto-saved session conversation logs
 ├── db/
 │   └── chroma_db/               # Persisted ChromaDB vector store
 ├── models/
@@ -67,7 +70,7 @@ RAG/
 ├── 11_ragas_eval.py             # RAGAS baseline evaluation
 ├── 12_citation_eval.py          # Citation enforcement + coverage scoring
 ├── 13_ci_gate.py                # CI quality gate (exits 1 on regression)
-├── 14_voice_interface.py        # Voice interface — wake word, speak, hear
+├── 14_voice_interface.py        # Voice interface — speak, hear, save history
 ├── update.py                    # CLI tool to add new facts and re-ingest
 │
 ├── ragas_results.json           # Run 1 raw scores
@@ -122,15 +125,15 @@ cd ../..
 
 ## Running the Pipeline
 
-### Voice interface (wake word + speak + listen)
+### Voice interface
 ```bash
 python 14_voice_interface.py
 ```
-- Say **"Okiro"** (Japanese for *wake up*) to activate
-- Speak your question
-- Press **Enter** to stop recording
-- The answer is spoken back in a natural voice
+- Starts immediately — no wake word needed
+- Speak your question and say **"ok"** at the end to stop recording
+- The answer is spoken back in a natural voice (`af_sky`)
 - Conversation memory is maintained across turns within the session
+- Session is automatically saved to `docs/history.txt` on exit
 - Press **Ctrl+C** to quit
 
 ### Update your knowledge base
@@ -164,19 +167,20 @@ python 13_ci_gate.py
 ## Voice Interface Architecture
 
 ```
-Say "Okiro" (wake word)
-       │
-  Whisper keyword spotting (2.5s chunks)
-       │
-  Wake word detected ✅
-       │
 🎤 Microphone (48000 Hz)
        │
   Resample → 16000 Hz
        │
-  Whisper STT (faster-whisper, base, CPU)
+  Whisper STT (faster-whisper, small, CPU)
+  [say "ok" to stop recording]
        │
   Question text
+       │
+  ┌────────────────────────────────────┐
+  │  Hybrid Question Router (prompt)   │
+  │  PERSONAL → RAG docs               │
+  │  GENERAL  → LLM world knowledge    │
+  └────────────────────────────────────┘
        │
   Conversation history (last 3 exchanges)
        │
@@ -184,18 +188,40 @@ Say "Okiro" (wake word)
        │
   Answer text
        │
-  Kokoro TTS (ONNX)
+  Kokoro TTS (ONNX, af_sky)
        │
   Resample 24000 → 48000 Hz
        │
 🔊 Speaker
+       │
+  Append to docs/history.txt on exit
 ```
 
-**Wake word:** The pipeline continuously listens in 2.5-second chunks. When "Okiro" is detected via Whisper keyword spotting, it activates and begins recording your question. No button press needed.
+**Stop word:** Say "ok" at the end of your question to stop recording. The watcher model (Whisper tiny) runs on a rolling buffer in a background thread, checking every 1.5 seconds for "ok".
+
+**Hybrid mode:** The LLM is prompted with two explicit modes — PERSONAL (uses RAG context) and GENERAL (uses world knowledge). This means "What is my favourite movie?" uses your docs, while "Tell me about Barcelona FC" gets a real football answer without hallucinating a connection to you.
+
+**Session history:** Every conversation is appended to `docs/history.txt` with a timestamp header when you press Ctrl+C. The file is created automatically if it doesn't exist. It is not indexed into ChromaDB — it's purely for your own reference.
 
 **Conversation memory:** The last 3 exchanges (6 turns) are injected into the prompt each turn, so follow-up questions like "why do I like it?" work naturally without repeating context.
 
 **Audio resampling:** Your ALSA device runs at 48000 Hz natively. All resampling (mic input and speaker output) uses `scipy.signal.resample_poly` for artifact-free audio.
+
+---
+
+## Session History Format
+
+Each session is appended to `docs/history.txt` in this format:
+
+```
+============================================================
+Session: 2026-04-04 18:12:30
+============================================================
+[You]: What is your favourite movie?
+[Me]: My all-time favorite movie is Veer-Zaara.
+[You]: Do I exercise?
+[Me]: Yes, I exercise for about 5–10 minutes daily.
+```
 
 ---
 
@@ -290,11 +316,15 @@ Query
 
 **Why hybrid retrieval + RRF?** BM25 handles exact keyword matches; vector search handles semantic similarity. RRF fuses both rank lists without requiring score normalisation. This combination consistently outperforms either retriever alone on recall.
 
-**Why always retrieve from docs?** An earlier version used an LLM classifier to route personal vs general questions. This was removed — the classifier was unreliable and the RAG prompt already handles missing context gracefully with "I don't have that information."
+**Why hybrid question routing via prompt?** An earlier version used a wake word ("Okiro") and an exit word ("Sayonara") for session control. These were removed — the wake word added friction with no benefit in a single-user setup, and the exit word was unreliable with STT. Ctrl+C is cleaner. The routing logic (personal vs general) is now handled entirely in the LLM prompt, which proved more reliable than a classifier.
+
+**Why Whisper small for transcription?** The base model produced too many mishearing errors on conversational speech. Small gives meaningfully better accuracy with acceptable latency on an i5 CPU (~2-3s per transcription).
+
+**Why Whisper tiny for "ok" detection?** Speed over accuracy — the stop word watcher runs every 1.5 seconds on a rolling buffer. Tiny is fast enough to not lag the recording loop.
 
 **Why Kokoro TTS over Piper?** Kokoro uses a neural ONNX model producing natural-sounding speech. Piper's `synthesize()` produced empty WAV output on this hardware configuration. Kokoro worked out of the box with no issues.
 
-**Why Whisper for wake word detection?** No API key needed, no paid SDK (e.g. Porcupine). Whisper runs on short 2.5s audio chunks with `beam_size=1` for speed. Trade-off: ~2.5s detection latency vs near-instant with a dedicated wake word engine.
+**Why save history to docs/history.txt but not index it?** History is for the user's reference only. Indexing it into ChromaDB would pollute the personal knowledge base with conversational noise and degrade retrieval quality.
 
 **Why RAGAS for evaluation?** RAGAS provides decomposed metrics that isolate retrieval quality from generation quality — critical for debugging whether a bad answer comes from the retriever or the LLM.
 
