@@ -121,37 +121,18 @@ def hybrid_retrieve(query, vectorstore, bm25_retriever):
     return fused[:TOP_K]
 
 # ── Generate answer ───────────────────────────────────────────────────────────
-def is_personal_question(question, llm):
-    """Ask LLM if the question is personal (about the user) or general."""
-    check_prompt = f"""Is this question asking about a specific person's personal life, preferences, history, or traits?
-Answer only YES or NO.
-
-Question: {question}"""
-    result = llm.invoke(check_prompt).strip().upper()
-    return result.startswith("YES")
-
 def generate_answer(question, docs, llm):
-    if is_personal_question(question, llm):
-        # Personal question — answer from docs
-        context = "\n\n---\n\n".join(
-            f"[Source {i+1}]: {doc.page_content}"
-            for i, doc in enumerate(docs)
-        )
-        prompt = f"""You are "Another Me" — a personal AI that answers questions about a specific person using their documents.
+    context = "\n\n---\n\n".join(
+        f"[Source {i+1}]: {doc.page_content}"
+        for i, doc in enumerate(docs)
+    )
+    prompt = f"""You are "Another Me" — a personal AI that answers questions about a specific person using their documents.
 Answer in 1-2 sentences using ONLY the context below. Keep it SHORT and natural for speech.
 Do NOT use bullet points, markdown, or citations.
 If the answer is not in the context, say: "I don't have that information."
 
 Context:
 {context}
-
-Question: {question}
-
-Answer:"""
-    else:
-        # General question — answer from LLM knowledge, no docs
-        prompt = f"""You are a helpful assistant. Answer this general question in 1-2 sentences.
-Keep it SHORT and natural — it will be read aloud. No bullet points or markdown.
 
 Question: {question}
 
