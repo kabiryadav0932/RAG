@@ -1,19 +1,20 @@
 """
-15_voice_interface.py
+14_voice_interface.py
 ---------------------
 Voice interface for the RAG pipeline.
 
-  🎤  Speak  →  Whisper (STT)  →  RAG pipeline  →  Piper (TTS)  →  🔊 Hear
+  Say "Okiro" → Whisper (STT) → RAG pipeline → Kokoro (TTS) → 🔊 Hear
 
 How to use:
-  - Press Enter to start recording
+  - Say "Okiro" (Japanese for "wake up") to activate
   - Speak your question
-  - Silence for 2 seconds stops the recording automatically
+  - Press Enter to stop recording
   - The answer is spoken back to you
+  - Conversation memory is maintained across turns within the session
   - Press Ctrl+C to quit
 
 Run:
-  python 15_voice_interface.py
+  python 14_voice_interface.py
 """
 
 import wave
@@ -54,6 +55,9 @@ MIC_DEVICE         = 0               # sof-hda-dsp hw:0,0 — 2 inputs
 DEVICE_RATE        = 48000           # native rate for sof-hda-dsp
 WHISPER_RATE       = 16000           # Whisper expects 16kHz
 
+WAKE_WORD          = "okiro"         # Japanese for "wake up"
+WAKE_CHUNK_SECS    = 2.5             # seconds of audio per wake-word check
+
 
 # ── Load RAG pipeline ─────────────────────────────────────────────────────────
 def load_pipeline():
@@ -87,7 +91,6 @@ def load_pipeline():
 # ── Load Whisper ──────────────────────────────────────────────────────────────
 def load_whisper():
     print(f"[init] Loading Whisper ({WHISPER_MODEL_SIZE})...")
-    # compute_type="int8" is fastest on CPU
     model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
     print("[init] Whisper ready.")
     return model
@@ -120,20 +123,80 @@ def hybrid_retrieve(query, vectorstore, bm25_retriever):
     fused          = reciprocal_rank_fusion([vector_results, bm25_results])
     return fused[:TOP_K]
 
+# ── Wake word listener ────────────────────────────────────────────────────────
+def listen_for_wake_word(whisper_model):
+    """Continuously listen in short chunks until wake word is detected."""
+    from math import gcd
+    chunk_samples = int(DEVICE_RATE * WAKE_CHUNK_SECS)
+    g = gcd(DEVICE_RATE, WHISPER_RATE)
+
+    print(f"[👂] Listening for wake word '{WAKE_WORD}'...")
+
+    while True:
+        audio = sd.rec(
+            chunk_samples,
+            samplerate=DEVICE_RATE,
+            channels=1,
+            dtype="float32",
+            device=MIC_DEVICE,
+        )
+        sd.wait()
+        audio = audio[:, 0]
+
+        # Skip if too quiet (silence)
+        if np.abs(audio).max() < 0.01:
+            continue
+
+        # Resample to 16kHz for Whisper
+        audio_16k = sps.resample_poly(audio, WHISPER_RATE // g, DEVICE_RATE // g)
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+            tmp_path = f.name
+            with wave.open(f, 'wb') as wf:
+                wf.setnchannels(1)
+                wf.setsampwidth(2)
+                wf.setframerate(WHISPER_RATE)
+                pcm = (audio_16k * 32767).astype(np.int16)
+                wf.writeframes(pcm.tobytes())
+
+        segments, _ = whisper_model.transcribe(
+            tmp_path,
+            language="en",
+            beam_size=1,          # fast — just need to catch the wake word
+            initial_prompt="Okiro.",
+        )
+        text = " ".join(seg.text for seg in segments).strip().lower()
+        Path(tmp_path).unlink(missing_ok=True)
+
+        if WAKE_WORD in text:
+            print(f"[✅] Wake word detected! ({text})")
+            return
+
 # ── Generate answer ───────────────────────────────────────────────────────────
-def generate_answer(question, docs, llm):
+def generate_answer(question, docs, llm, chat_history):
     context = "\n\n---\n\n".join(
         f"[Source {i+1}]: {doc.page_content}"
         for i, doc in enumerate(docs)
     )
+
+    # Format last 3 exchanges (6 turns) of history
+    history_text = ""
+    if chat_history:
+        lines = []
+        for role, text in chat_history[-6:]:
+            label = "User" if role == "user" else "Assistant"
+            lines.append(f"{label}: {text}")
+        history_text = "\n".join(lines)
+
     prompt = f"""You are "Another Me" — a personal AI that answers questions about a specific person using their documents.
-Answer in 1-2 sentences using ONLY the context below. Keep it SHORT and natural for speech.
+Answer in 1-2 sentences. Keep it SHORT and natural for speech.
 Do NOT use bullet points, markdown, or citations.
-If the answer is not in the context, say: "I don't have that information."
+If the answer is not in the context, use the conversation history or your general knowledge to help.
 
 Context:
 {context}
 
+{"Conversation so far:" + chr(10) + history_text + chr(10) if history_text else ""}
 Question: {question}
 
 Answer:"""
@@ -143,7 +206,7 @@ Answer:"""
     trimmed   = '. '.join(sentences[:2])
     return trimmed + '.' if trimmed and not trimmed.endswith('.') else trimmed
 
-# ── Record audio with auto-stop on silence ────────────────────────────────────
+# ── Record audio ──────────────────────────────────────────────────────────────
 def record_manual():
     frames = []
 
@@ -154,21 +217,20 @@ def record_manual():
 
     stream = sd.InputStream(
         device=MIC_DEVICE,
-        samplerate=DEVICE_RATE,        # record at hardware native rate (48000)
+        samplerate=DEVICE_RATE,
         channels=1,
         dtype="float32",
         callback=callback,
         blocksize=1024,
     )
     stream.start()
-    input()          # blocks until user presses Enter
+    input()
     stream.stop()
     stream.close()
 
     audio = np.concatenate(frames, axis=0)
     print(f"[🎤] Recorded {len(audio)/DEVICE_RATE:.1f}s of audio.")
 
-    # Resample 48000 → 16000 for Whisper (resample_poly avoids artifacts)
     from math import gcd
     g = gcd(DEVICE_RATE, WHISPER_RATE)
     audio = sps.resample_poly(audio, WHISPER_RATE // g, DEVICE_RATE // g)
@@ -177,13 +239,12 @@ def record_manual():
 
 # ── Transcribe with Whisper ───────────────────────────────────────────────────
 def transcribe(audio, whisper_model):
-    # Save to a temp wav file — faster-whisper needs a file path or numpy array
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
         tmp_path = f.name
         with wave.open(f, 'wb') as wf:
             wf.setnchannels(1)
-            wf.setsampwidth(2)  # 16-bit
-            wf.setframerate(WHISPER_RATE)          # wav header must match resampled rate
+            wf.setsampwidth(2)
+            wf.setframerate(WHISPER_RATE)
             pcm = (audio * 32767).astype(np.int16)
             wf.writeframes(pcm.tobytes())
 
@@ -197,7 +258,7 @@ def transcribe(audio, whisper_model):
     Path(tmp_path).unlink(missing_ok=True)
     return text
 
-# ── Speak with Kokoro ────────────────────────────────────────────────────────
+# ── Speak with Kokoro ─────────────────────────────────────────────────────────
 def speak(text, kokoro):
     print("[🔊] Speaking...")
     from math import gcd
@@ -213,28 +274,30 @@ if __name__ == "__main__":
     print("  Another Me — Voice Interface")
     print("=" * 60)
 
-    # Load all models once
     vectorstore, bm25_retriever, llm = load_pipeline()
     whisper_model = load_whisper()
     kokoro        = load_kokoro()
 
     print("\n" + "=" * 60)
-    print("  Press Enter to START recording.")
-    print("  Press Enter again to STOP and get your answer.")
+    print(f"  Say '{WAKE_WORD}' to start speaking.")
+    print("  Then press Enter to STOP and get your answer.")
     print("  Press Ctrl+C to quit.")
     print("=" * 60)
 
+    chat_history = []  # in-memory conversation history
+
     while True:
         try:
-            input("\n[Press Enter to start speaking]")
+            # 1. Wait for wake word
+            listen_for_wake_word(whisper_model)
 
-            # 1. Record until second Enter
+            # 2. Record question until Enter
             audio = record_manual()
-            if len(audio) / WHISPER_RATE < 0.5:   # length check after resampling
+            if len(audio) / WHISPER_RATE < 0.5:
                 print("[!] Too short — try again.")
                 continue
 
-            # 2. Transcribe
+            # 3. Transcribe
             print("[⏳] Transcribing...")
             question = transcribe(audio, whisper_model)
             if not question.strip():
@@ -242,13 +305,17 @@ if __name__ == "__main__":
                 continue
             print(f"\n[You]  {question}")
 
-            # 3. RAG retrieve + generate
+            # 4. RAG retrieve + generate
             print("[⏳] Thinking...")
             docs   = hybrid_retrieve(question, vectorstore, bm25_retriever)
-            answer = generate_answer(question, docs, llm)
+            answer = generate_answer(question, docs, llm, chat_history)
             print(f"[Me]   {answer}")
 
-            # 4. Speak answer
+            # 5. Update chat history
+            chat_history.append(("user", question))
+            chat_history.append(("assistant", answer))
+
+            # 6. Speak answer
             speak(answer, kokoro)
 
         except KeyboardInterrupt:
