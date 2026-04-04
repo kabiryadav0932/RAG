@@ -3,13 +3,11 @@
 ---------------------
 Voice interface for the RAG pipeline.
 
-  Say "Okiro" → Whisper (STT) → RAG pipeline → Kokoro (TTS) → 🔊 Hear
+  Speak → Whisper (STT) → RAG pipeline → Kokoro (TTS) → 🔊 Hear
 
 How to use:
-  - Say "Okiro" (Japanese for "wake up") to activate
-  - Speak your question
-  - Press Enter to stop recording
-  - The answer is spoken back to you
+  - Speak your question and say "ok" at the end to stop recording
+  - The answer is spoken back to you — then it's ready for your next question immediately
   - Conversation memory is maintained across turns within the session
   - Press Ctrl+C to quit
 
@@ -18,6 +16,7 @@ Run:
 """
 
 import wave
+import threading
 import tempfile
 import warnings
 import numpy as np
@@ -37,6 +36,7 @@ from kokoro_onnx import Kokoro
 
 # ── Config ────────────────────────────────────────────────────────────────────
 DOCS_PATH          = "docs"
+HISTORY_FILE       = "docs/history.txt"
 DB_PATH            = "db/chroma_db"
 EMBEDDING_MODEL    = "all-MiniLM-L6-v2"
 COLLECTION_NAME    = "main_chunks"
@@ -46,17 +46,24 @@ RRF_K              = 60
 BM25_CHUNK_SIZE    = 500
 BM25_CHUNK_OVERLAP = 50
 
-WHISPER_MODEL_SIZE = "base"          # tiny/base/small — base is best balance on CPU
+WHISPER_MODEL_SIZE      = "small"     # used for transcription — best accuracy on CPU
+WHISPER_WATCHER_SIZE    = "tiny"     # used only for "ok" detection — speed over accuracy
 KOKORO_MODEL       = "models/kokoro/kokoro-v0_19.onnx"
 KOKORO_VOICES      = "models/kokoro/voices.bin"
-KOKORO_VOICE       = "af_bella"
+KOKORO_VOICE       = "af_sky"
 
 MIC_DEVICE         = 0               # sof-hda-dsp hw:0,0 — 2 inputs
 DEVICE_RATE        = 48000           # native rate for sof-hda-dsp
 WHISPER_RATE       = 16000           # Whisper expects 16kHz
 
-WAKE_WORD          = "okiro"         # Japanese for "wake up"
-WAKE_CHUNK_SECS    = 2.5             # seconds of audio per wake-word check
+NE_STOP_WORD       = "ok"           # ends your question hands-free
+
+# How often (in seconds) to check the rolling buffer for "ok" while recording
+NE_CHECK_INTERVAL  = 1.5            # check every 1.5s of new audio
+
+# VAD — Voice Activity Detection
+VAD_RMS_THRESHOLD  = 0.02           # RMS energy below this = silence (tune if needed)
+VAD_SILENCE_RATIO  = 0.85           # if >85% of frames are silent, skip the chunk
 
 
 # ── Load RAG pipeline ─────────────────────────────────────────────────────────
@@ -90,10 +97,13 @@ def load_pipeline():
 
 # ── Load Whisper ──────────────────────────────────────────────────────────────
 def load_whisper():
-    print(f"[init] Loading Whisper ({WHISPER_MODEL_SIZE})...")
+    print(f"[init] Loading Whisper ({WHISPER_MODEL_SIZE}) for transcription...")
     model = WhisperModel(WHISPER_MODEL_SIZE, device="cpu", compute_type="int8")
-    print("[init] Whisper ready.")
-    return model
+    print("[init] Whisper base ready.")
+    print(f"[init] Loading Whisper ({WHISPER_WATCHER_SIZE}) for 'ok' detection...")
+    watcher_model = WhisperModel(WHISPER_WATCHER_SIZE, device="cpu", compute_type="int8")
+    print("[init] Whisper tiny ready.")
+    return model, watcher_model
 
 # ── Load Kokoro ───────────────────────────────────────────────────────────────
 def load_kokoro():
@@ -123,54 +133,6 @@ def hybrid_retrieve(query, vectorstore, bm25_retriever):
     fused          = reciprocal_rank_fusion([vector_results, bm25_results])
     return fused[:TOP_K]
 
-# ── Wake word listener ────────────────────────────────────────────────────────
-def listen_for_wake_word(whisper_model):
-    """Continuously listen in short chunks until wake word is detected."""
-    from math import gcd
-    chunk_samples = int(DEVICE_RATE * WAKE_CHUNK_SECS)
-    g = gcd(DEVICE_RATE, WHISPER_RATE)
-
-    print(f"[👂] Listening for wake word '{WAKE_WORD}'...")
-
-    while True:
-        audio = sd.rec(
-            chunk_samples,
-            samplerate=DEVICE_RATE,
-            channels=1,
-            dtype="float32",
-            device=MIC_DEVICE,
-        )
-        sd.wait()
-        audio = audio[:, 0]
-
-        # Skip if too quiet (silence)
-        if np.abs(audio).max() < 0.01:
-            continue
-
-        # Resample to 16kHz for Whisper
-        audio_16k = sps.resample_poly(audio, WHISPER_RATE // g, DEVICE_RATE // g)
-
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
-            tmp_path = f.name
-            with wave.open(f, 'wb') as wf:
-                wf.setnchannels(1)
-                wf.setsampwidth(2)
-                wf.setframerate(WHISPER_RATE)
-                pcm = (audio_16k * 32767).astype(np.int16)
-                wf.writeframes(pcm.tobytes())
-
-        segments, _ = whisper_model.transcribe(
-            tmp_path,
-            language="en",
-            beam_size=1,          # fast — just need to catch the wake word
-            initial_prompt="Okiro.",
-        )
-        text = " ".join(seg.text for seg in segments).strip().lower()
-        Path(tmp_path).unlink(missing_ok=True)
-
-        if WAKE_WORD in text:
-            print(f"[✅] Wake word detected! ({text})")
-            return
 
 # ── Generate answer ───────────────────────────────────────────────────────────
 def generate_answer(question, docs, llm, chat_history):
@@ -188,12 +150,14 @@ def generate_answer(question, docs, llm, chat_history):
             lines.append(f"{label}: {text}")
         history_text = "\n".join(lines)
 
-    prompt = f"""You are "Another Me" — a personal AI that answers questions about a specific person using their documents.
+    prompt = f"""You are "Another Me" — a personal AI with two modes:
+1. PERSONAL: If the question is about the person (their life, preferences, background, work, opinions), answer using the Context and conversation history below.
+2. GENERAL: If the question is about the world (sports, science, history, people, places, facts), answer directly from your general knowledge — do NOT try to connect it to the person.
+
 Answer in 1-2 sentences. Keep it SHORT and natural for speech.
 Do NOT use bullet points, markdown, or citations.
-If the answer is not in the context, use the conversation history or your general knowledge to help.
 
-Context:
+Context (personal documents):
 {context}
 
 {"Conversation so far:" + chr(10) + history_text + chr(10) if history_text else ""}
@@ -206,14 +170,49 @@ Answer:"""
     trimmed   = '. '.join(sentences[:2])
     return trimmed + '.' if trimmed and not trimmed.endswith('.') else trimmed
 
-# ── Record audio ──────────────────────────────────────────────────────────────
-def record_manual():
-    frames = []
+# ── Quick transcribe helper (for "ne" detection) ──────────────────────────────
+def _quick_transcribe(audio_chunk, whisper_model):
+    """Transcribe a short audio chunk. Returns lowercase text."""
+    from math import gcd
+    g = gcd(DEVICE_RATE, WHISPER_RATE)
+    audio_16k = sps.resample_poly(audio_chunk, WHISPER_RATE // g, DEVICE_RATE // g)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
+        tmp_path = f.name
+        with wave.open(f, 'wb') as wf:
+            wf.setnchannels(1)
+            wf.setsampwidth(2)
+            wf.setframerate(WHISPER_RATE)
+            pcm = (audio_16k * 32767).astype(np.int16)
+            wf.writeframes(pcm.tobytes())
+
+    segments, _ = whisper_model.transcribe(
+        tmp_path,
+        language="en",
+        beam_size=1,
+        initial_prompt="ok.",
+    )
+    text = " ".join(seg.text for seg in segments).strip().lower()
+    Path(tmp_path).unlink(missing_ok=True)
+    return text
+
+# ── Record audio — stops when "ne" is heard ───────────────────────────────────
+def record_until_ne(whisper_model, watcher_model):
+    """
+    Records audio continuously. Every NE_CHECK_INTERVAL seconds, the latest
+    chunk is transcribed to check for "ne". When detected, recording stops.
+    Returns the full recorded audio (resampled to WHISPER_RATE).
+    """
+    from math import gcd
+
+    frames      = []          # all recorded frames
+    stop_event  = threading.Event()
+    ne_detected = threading.Event()
+
+    check_chunk_samples = int(DEVICE_RATE * NE_CHECK_INTERVAL)
 
     def callback(indata, frame_count, time_info, status):
         frames.append(indata[:, 0].copy())
-
-    print("[🎤] Recording... (press Enter to stop)")
 
     stream = sd.InputStream(
         device=MIC_DEVICE,
@@ -223,18 +222,57 @@ def record_manual():
         callback=callback,
         blocksize=1024,
     )
+
+    print("[🎤] Recording... (say 'ok' to stop)")
     stream.start()
-    input()
+
+    # Background thread: periodically check last chunk for "ne"
+    def ne_watcher():
+        last_checked = 0
+        while not stop_event.is_set():
+            # Collect enough new samples before checking
+            current = sum(len(f) for f in frames)
+            new_samples = current - last_checked
+            if new_samples >= check_chunk_samples:
+                # Grab the last check_chunk_samples worth of audio
+                all_audio = np.concatenate(frames, axis=0)
+                chunk     = all_audio[-check_chunk_samples:]
+                last_checked = current
+
+                # VAD: skip if chunk is mostly silence
+                frame_size = 512
+                frames_vad = [chunk[i:i+frame_size] for i in range(0, len(chunk), frame_size)]
+                silent_frames = sum(1 for f in frames_vad if np.sqrt(np.mean(f**2)) < VAD_RMS_THRESHOLD)
+                if silent_frames / max(len(frames_vad), 1) > VAD_SILENCE_RATIO:
+                    continue
+
+                text = _quick_transcribe(chunk, watcher_model)
+                # "ne" often transcribed as "ne", "neh", "ね", or at end of sentence
+                words = text.strip().rstrip(".!?,").split()
+                if words and words[-1].lower() in ("ok", "okay", "oké"):
+                    print(f"[OK] Stop word detected! ({text})")
+                    ne_detected.set()
+                    stop_event.set()
+
+            stop_event.wait(timeout=0.1)  # small sleep to avoid busy-loop
+
+    watcher_thread = threading.Thread(target=ne_watcher, daemon=True)
+    watcher_thread.start()
+
+    # Wait until "ne" is detected
+    ne_detected.wait()
+
+    stop_event.set()
     stream.stop()
     stream.close()
+    watcher_thread.join(timeout=2)
 
     audio = np.concatenate(frames, axis=0)
-    print(f"[🎤] Recorded {len(audio)/DEVICE_RATE:.1f}s of audio.")
+    duration = len(audio) / DEVICE_RATE
+    print(f"[🎤] Recorded {duration:.1f}s of audio.")
 
-    from math import gcd
     g = gcd(DEVICE_RATE, WHISPER_RATE)
     audio = sps.resample_poly(audio, WHISPER_RATE // g, DEVICE_RATE // g)
-
     return audio
 
 # ── Transcribe with Whisper ───────────────────────────────────────────────────
@@ -268,6 +306,21 @@ def speak(text, kokoro):
     sd.play(audio, samplerate=DEVICE_RATE)
     sd.wait()
 
+# ── Save session history ──────────────────────────────────────────────────────
+def save_history(chat_history):
+    if not chat_history:
+        return
+    from datetime import datetime
+    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    with open(HISTORY_FILE, "a", encoding="utf-8") as f:
+        f.write(f"\n{'='*60}\n")
+        f.write(f"Session: {timestamp}\n")
+        f.write(f"{'='*60}\n")
+        for role, text in chat_history:
+            label = "You" if role == "user" else "Me"
+            f.write(f"[{label}]: {text}\n")
+    print(f"[💾] Session saved to {HISTORY_FILE}")
+
 # ── Main loop ─────────────────────────────────────────────────────────────────
 if __name__ == "__main__":
     print("=" * 60)
@@ -275,51 +328,63 @@ if __name__ == "__main__":
     print("=" * 60)
 
     vectorstore, bm25_retriever, llm = load_pipeline()
-    whisper_model = load_whisper()
+    whisper_model, watcher_model = load_whisper()
     kokoro        = load_kokoro()
 
     print("\n" + "=" * 60)
-    print(f"  Say '{WAKE_WORD}' to start speaking.")
-    print("  Then press Enter to STOP and get your answer.")
+    print(f"  Speak your question and end with 'ok' to stop recording.")
     print("  Press Ctrl+C to quit.")
     print("=" * 60)
 
     chat_history = []  # in-memory conversation history
 
+    # ── Greet immediately ─────────────────────────────────────────────────────
+    try:
+        speak("Ohayou. I'm ready. Ask me anything.", kokoro)
+    except KeyboardInterrupt:
+        save_history(chat_history)
+        print("\n\n[Sayonara!]")
+        exit(0)
+
+    # ── Conversation loop ─────────────────────────────────────────────────────
     while True:
         try:
-            # 1. Wait for wake word
-            listen_for_wake_word(whisper_model)
-
-            # 2. Record question until Enter
-            audio = record_manual()
+            # 1. Record question — stops when "ok" is heard
+            audio = record_until_ne(whisper_model, watcher_model)
             if len(audio) / WHISPER_RATE < 0.5:
                 print("[!] Too short — try again.")
                 continue
 
-            # 3. Transcribe
+            # 2. Transcribe
             print("[⏳] Transcribing...")
             question = transcribe(audio, whisper_model)
             if not question.strip():
                 print("[!] Couldn't hear anything — try again.")
                 continue
+
+            # Strip trailing "ok" from the transcribed question
+            words = question.strip().rstrip(".!?,").split()
+            if words and words[-1].lower() in ("ok", "okay", "oké", "k"):
+                question = " ".join(words[:-1]).strip()
+
             print(f"\n[You]  {question}")
 
-            # 4. RAG retrieve + generate
+            # 3. RAG retrieve + generate
             print("[⏳] Thinking...")
             docs   = hybrid_retrieve(question, vectorstore, bm25_retriever)
             answer = generate_answer(question, docs, llm, chat_history)
             print(f"[Me]   {answer}")
 
-            # 5. Update chat history
+            # 4. Update chat history
             chat_history.append(("user", question))
             chat_history.append(("assistant", answer))
 
-            # 6. Speak answer
+            # 5. Speak answer
             speak(answer, kokoro)
 
         except KeyboardInterrupt:
-            print("\n\n[Bye!]")
+            save_history(chat_history)
+            print("\n\n[Sayonara!]")
             break
         except Exception as e:
             print(f"[error] {e}")
