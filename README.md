@@ -11,11 +11,11 @@ Built as a portfolio project covering **Production RAG**, **Monitoring & Observa
 Given a set of personal documents, the pipeline answers questions about the person by:
 1. Retrieving relevant chunks using hybrid search (BM25 + vector) fused with RRF
 2. Reranking results with a cross-encoder for precision
-3. Routing questions — personal questions answered from docs, general questions answered from LLM knowledge
-4. Generating concise answers using a local LLM (llama3.2 via Ollama)
+3. Generating concise answers using a local LLM (llama3.2 via Ollama)
+4. Maintaining **conversation memory** across turns within a session
 5. Evaluating answer quality across 6 metrics using RAGAS + custom citation scoring
 6. Gating the pipeline on quality thresholds — fails CI if any metric regresses
-7. **Speaking answers aloud** using Kokoro neural TTS, and **listening to questions** via Whisper STT
+7. **Speaking answers aloud** using Kokoro neural TTS, and **listening to questions** via Whisper STT with a custom **"Okiro" wake word**
 
 ---
 
@@ -31,6 +31,7 @@ Given a set of personal documents, the pipeline answers questions about the pers
 | Evaluation | RAGAS + custom citation metrics |
 | Speech-to-text | `faster-whisper` (base model, CPU) |
 | Text-to-speech | Kokoro ONNX (`af_bella` voice) |
+| Wake word | Whisper-based keyword spotting (`"Okiro"`) |
 | Audio I/O | `sounddevice` + `scipy` (resampling) |
 | Language | Python 3.11 |
 
@@ -43,7 +44,8 @@ All models run locally. No internet required after initial setup.
 ```
 RAG/
 ├── docs/                        # Source documents (plain .txt)
-│   └── learned.txt              # Auto-saved facts learned from voice conversations
+│   ├── data.txt                 # Personal knowledge base
+│   └── personal.txt             # Additional personal facts
 ├── db/
 │   └── chroma_db/               # Persisted ChromaDB vector store
 ├── models/
@@ -65,7 +67,8 @@ RAG/
 ├── 11_ragas_eval.py             # RAGAS baseline evaluation
 ├── 12_citation_eval.py          # Citation enforcement + coverage scoring
 ├── 13_ci_gate.py                # CI quality gate (exits 1 on regression)
-├── 14_voice_interface.py        # Voice interface — speak to and hear from the pipeline
+├── 14_voice_interface.py        # Voice interface — wake word, speak, hear
+├── update.py                    # CLI tool to add new facts and re-ingest
 │
 ├── ragas_results.json           # Run 1 raw scores
 ├── citation_ragas_results.json  # Run 3 raw scores
@@ -95,7 +98,7 @@ python -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
 pip install faster-whisper kokoro-onnx sounddevice scipy soundfile
-``` 
+```
 
 ### Add your documents
 
@@ -119,15 +122,31 @@ cd ../..
 
 ## Running the Pipeline
 
-### Voice interface (speak + listen)
+### Voice interface (wake word + speak + listen)
 ```bash
 python 14_voice_interface.py
 ```
-- Press **Enter** to start recording
+- Say **"Okiro"** (Japanese for *wake up*) to activate
 - Speak your question
-- Press **Enter** again to stop
-- The answer is spoken back to you in a natural voice
+- Press **Enter** to stop recording
+- The answer is spoken back in a natural voice
+- Conversation memory is maintained across turns within the session
 - Press **Ctrl+C** to quit
+
+### Update your knowledge base
+```bash
+# Add a single fact (appends to data.txt + re-ingests automatically)
+python update.py "I started learning Japanese today."
+
+# Add without re-ingesting (batch multiple facts first)
+python update.py "My new hobby is photography." --no-reingest
+
+# Bulk import from a file (one fact per line)
+python update.py --file my_notes.txt
+
+# View recent entries
+python update.py --list
+```
 
 ### Full evaluation (RAGAS + citation metrics)
 ```bash
@@ -145,6 +164,12 @@ python 13_ci_gate.py
 ## Voice Interface Architecture
 
 ```
+Say "Okiro" (wake word)
+       │
+  Whisper keyword spotting (2.5s chunks)
+       │
+  Wake word detected ✅
+       │
 🎤 Microphone (48000 Hz)
        │
   Resample → 16000 Hz
@@ -153,27 +178,38 @@ python 13_ci_gate.py
        │
   Question text
        │
-  ┌────┴────────────────────────────┐
-  │  Personal question?             │  General question?
-  │  (LLM classifier)               │
-  ▼                                 ▼
-RAG Pipeline                   LLM direct answer
-(BM25 + vector + RRF)          (llama3.2 knowledge)
-       │                             │
-       └──────────┬──────────────────┘
-                  ▼
-           Answer text
-                  │
-          Kokoro TTS (ONNX)
-                  │
-       Resample 24000 → 48000 Hz
-                  │
-            🔊 Speaker
+  Conversation history (last 3 exchanges)
+       │
+  RAG Pipeline (BM25 + vector + RRF)
+       │
+  Answer text
+       │
+  Kokoro TTS (ONNX)
+       │
+  Resample 24000 → 48000 Hz
+       │
+🔊 Speaker
 ```
 
-**Smart routing:** The pipeline classifies each question before answering. Personal questions ("what is my favorite movie?") are answered strictly from your documents. General questions ("recommend movies like Veer-Zaara") are answered from the LLM's own knowledge — no doc contamination.
+**Wake word:** The pipeline continuously listens in 2.5-second chunks. When "Okiro" is detected via Whisper keyword spotting, it activates and begins recording your question. No button press needed.
+
+**Conversation memory:** The last 3 exchanges (6 turns) are injected into the prompt each turn, so follow-up questions like "why do I like it?" work naturally without repeating context.
 
 **Audio resampling:** Your ALSA device runs at 48000 Hz natively. All resampling (mic input and speaker output) uses `scipy.signal.resample_poly` for artifact-free audio.
+
+---
+
+## Knowledge Base Management
+
+"Another Me" is designed to grow with you. Use `update.py` to teach it new facts at any time:
+
+```bash
+python update.py "I got selected for a research internship at IISc."
+python update.py "My CGPA this semester is 9.1."
+python update.py "I finished reading Atomic Habits."
+```
+
+Each fact is timestamped and appended to `docs/data.txt`. The vector store is automatically rebuilt so the new information is immediately queryable via the voice interface.
 
 ---
 
@@ -250,13 +286,15 @@ Query
 
 **Why fully local?** Privacy, zero cost, and to demonstrate understanding of inference constraints — the same trade-offs that matter in real enterprise deployments.
 
-**Why llama3.2?** Better instruction following and significantly reduced hallucination compared to smaller models. Used for both answer generation and the question-routing classifier.
+**Why llama3.2?** Better instruction following and significantly reduced hallucination compared to smaller models.
 
 **Why hybrid retrieval + RRF?** BM25 handles exact keyword matches; vector search handles semantic similarity. RRF fuses both rank lists without requiring score normalisation. This combination consistently outperforms either retriever alone on recall.
 
+**Why always retrieve from docs?** An earlier version used an LLM classifier to route personal vs general questions. This was removed — the classifier was unreliable and the RAG prompt already handles missing context gracefully with "I don't have that information."
+
 **Why Kokoro TTS over Piper?** Kokoro uses a neural ONNX model producing natural-sounding speech. Piper's `synthesize()` produced empty WAV output on this hardware configuration. Kokoro worked out of the box with no issues.
 
-**Why Whisper base?** Best balance of accuracy and CPU speed for conversational use. The `initial_prompt` parameter is used to bias recognition toward Indian names, Bollywood titles, and project-specific terminology.
+**Why Whisper for wake word detection?** No API key needed, no paid SDK (e.g. Porcupine). Whisper runs on short 2.5s audio chunks with `beam_size=1` for speed. Trade-off: ~2.5s detection latency vs near-instant with a dedicated wake word engine.
 
 **Why RAGAS for evaluation?** RAGAS provides decomposed metrics that isolate retrieval quality from generation quality — critical for debugging whether a bad answer comes from the retriever or the LLM.
 
